@@ -1,0 +1,53 @@
+		Wireless Driver Nmap -- support netmap zerocopy on wifi drivers 		
+
+--------------------------------------------------------------------------------
+Wireless Driver Nmap is a patch to the linux kernel 3.18.17 and netmap
+which enable skbuffs allocated in kernel to be accessible by userspace. 
+
+wifi driver does not have tx/rx ring buffer and packets can get be sent out in any order. 
+netmap cannot be directly used to access the packets. 
+
+This patch helps the wireless driver to simulate a ring buffer on top of the 
+actual tx/rx hw queues. 
+The skb's are allocated from the netmap memory pool, these skb's can be then 
+accessed by the netmap user application.
+
+--------------------------------------------------------------------------------
+
+Apply the patch wdnmap_kernl.patch on the linux kernel 3.18.17. 
+
+Apply the patch wdnmap.patch on the latest netmap version
+
+Or
+	In netmap_slot in sys/net/netmap.h
+	in struct netmap_slot add the following lines: 
+
+/* XXX: wd_netmap */
+        uint32_t old_buf;  /* old buffer idx for wd zero copy */
+
+--------------------------------------------------------------------------------
+
+sample_netdrv/ --> this is an example network driver using the wd nmap API. 
+                 wd_nmap.h has APIs to be used to implement the zero copy nmap. 
+
+examples/wd_nmap.c --> this is a user space utility program which initializes the 
+                       netmap and reads buffers from drivers.
+
+---------------------------------------------------------------------------------
+
+to build: 
+
+you need the latest copy of netmap source and patched linux kernel 3.18.17
+
+sample_netdrv:  
+	cd sample_netdrv
+	make -C <linux kernel source dir> M=<wd nmap source directory> N=<netmap source dir>
+
+wd_nmap:
+	cd examples
+	make NMAP_SRC=<netmap source dir>
+
+----------------------------------------------------------------------------------
+
+
+Author: 	Vinay Sagar K V

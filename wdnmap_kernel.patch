@@ -1,0 +1,219 @@
+diff -Naur linux-3.18.17/include/linux/skbuff.h linux-3.18.17_wdnmap_clean/include/linux/skbuff.h
+--- linux-3.18.17/include/linux/skbuff.h	2015-06-28 10:40:40.000000000 -0700
++++ linux-3.18.17_wdnmap_clean/include/linux/skbuff.h	2015-08-06 22:30:27.188997544 -0700
+@@ -606,6 +606,10 @@
+ #endif
+ #endif
+ 
++#if defined( CONFIG_WD_NMAP )
++   	__u8            wd_netmap;
++    	void           *wd_nmap_ctx;
++#endif
+ 	union {
+ 		__wsum		csum;
+ 		struct {
+@@ -657,6 +661,11 @@
+ 	atomic_t		users;
+ };
+ 
++#if defined( CONFIG_WD_NMAP )
++extern    bool    wd_nmap_support ;
++#endif
++
++
+ #ifdef __KERNEL__
+ /*
+  *	Handling routines are only of interest to the kernel
+diff -Naur linux-3.18.17/net/core/skbuff.c linux-3.18.17_wdnmap_clean/net/core/skbuff.c
+--- linux-3.18.17/net/core/skbuff.c	2015-06-28 10:40:40.000000000 -0700
++++ linux-3.18.17_wdnmap_clean/net/core/skbuff.c	2015-07-25 16:40:59.952844591 -0700
+@@ -76,6 +76,18 @@
+ #include <linux/highmem.h>
+ 
+ struct kmem_cache *skbuff_head_cache __read_mostly;
++
++#if defined( CONFIG_WD_NMAP )
++bool    wd_nmap_support = false;
++
++u8*     (*wd_nmap_alloc)(int, void **) = NULL;
++void    (*wd_nmap_free)(void *) = NULL;
++EXPORT_SYMBOL (wd_nmap_alloc);
++EXPORT_SYMBOL(wd_nmap_free);
++EXPORT_SYMBOL(wd_nmap_support);
++#endif
++
++
+ static struct kmem_cache *skbuff_fclone_cache __read_mostly;
+ 
+ /**
+@@ -203,6 +215,12 @@
+ 	struct sk_buff *skb;
+ 	u8 *data;
+ 	bool pfmemalloc;
++#ifdef CONFIG_WD_NMAP
++    	int nmap_alloc = 0;
++    	void *nmap_priv;
++#endif
++
++
+ 
+ 	cache = (flags & SKB_ALLOC_FCLONE)
+ 		? skbuff_fclone_cache : skbuff_head_cache;
+@@ -223,6 +241,17 @@
+ 	 */
+ 	size = SKB_DATA_ALIGN(size);
+ 	size += SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
++#ifdef CONFIG_WD_NMAP
++    	data = NULL;
++    	if (wd_nmap_support)
++    	{
++        	data = (*wd_nmap_alloc)(size, &nmap_priv);
++        	if (data)
++            		nmap_alloc = 1;
++   	}
++    	if (!data)
++#endif
++
+ 	data = kmalloc_reserve(size, gfp_mask, node, &pfmemalloc);
+ 	if (!data)
+ 		goto nodata;
+@@ -230,7 +259,11 @@
+ 	 * Put skb_shared_info exactly at the end of allocated zone,
+ 	 * to allow max possible filling before reallocation.
+ 	 */
++	if (!nmap_alloc)
+ 	size = SKB_WITH_OVERHEAD(ksize(data));
++	else
++	size = SKB_WITH_OVERHEAD(2048);
++
+ 	prefetchw(data + size);
+ 
+ 	/*
+@@ -249,6 +282,16 @@
+ 	skb->end = skb->tail + size;
+ 	skb->mac_header = (typeof(skb->mac_header))~0U;
+ 	skb->transport_header = (typeof(skb->transport_header))~0U;
++#ifdef CONFIG_WD_NMAP
++    	skb->wd_netmap = 0;
++    	if (nmap_alloc)
++    	{
++            skb->wd_netmap = 1;
++            skb->wd_nmap_ctx = (void *)nmap_priv;
++    	}
++#endif
++
++
+ 
+ 	/* make sure we initialize shinfo sequentially */
+ 	shinfo = skb_shinfo(skb);
+@@ -546,6 +589,14 @@
+ 	if (shinfo->frag_list)
+ 		kfree_skb_list(shinfo->frag_list);
+ 
++#ifdef CONFIG_WD_NMAP
++        if ((skb->wd_netmap == 1))
++        {
++           /*XXX: free the netmap buffers */ 
++            (*wd_nmap_free)(skb->wd_nmap_ctx);
++        }
++        else
++#endif
+ 	skb_free_head(skb);
+ }
+ 
+@@ -784,6 +835,10 @@
+ 	C(head_frag);
+ 	C(data);
+ 	C(truesize);
++#ifdef CONFIG_WD_NMAP
++    	C(wd_netmap);
++    	C(wd_nmap_ctx);
++#endif
+ 	atomic_set(&n->users, 1);
+ 
+ 	atomic_inc(&(skb_shinfo(skb)->dataref));
+@@ -1073,6 +1128,10 @@
+ 	u8 *data;
+ 	int size = nhead + skb_end_offset(skb) + ntail;
+ 	long off;
++#ifdef CONFIG_WD_NMAP
++    int nmap_alloc = 0,prev_alloc = skb->wd_netmap;
++    void  *nmap_priv;
++#endif
+ 
+ 	BUG_ON(nhead < 0);
+ 
+@@ -1083,11 +1142,25 @@
+ 
+ 	if (skb_pfmemalloc(skb))
+ 		gfp_mask |= __GFP_MEMALLOC;
++#ifdef CONFIG_WD_NMAP
++    	data = NULL;
++    	if (wd_nmap_support)
++    	{
++        	data = (*wd_nmap_alloc)(size + SKB_DATA_ALIGN(sizeof(struct skb_shared_info)), &nmap_priv);
++        	if (data)
++            		nmap_alloc = 1;
++    	}
++    	if (!data)
++#endif
++
+ 	data = kmalloc_reserve(size + SKB_DATA_ALIGN(sizeof(struct skb_shared_info)),
+ 			       gfp_mask, NUMA_NO_NODE, NULL);
+ 	if (!data)
+ 		goto nodata;
++	if (!nmap_alloc)
+ 	size = SKB_WITH_OVERHEAD(ksize(data));
++	else
++	size = SKB_WITH_OVERHEAD(2048);
+ 
+ 	/* Copy only real data... and, alas, header. This should be
+ 	 * optimized for the cases when header is void.
+@@ -1115,6 +1188,15 @@
+ 
+ 		skb_release_data(skb);
+ 	} else {
++#ifdef CONFIG_WD_NMAP
++        if ((skb->wd_netmap == 1))
++        {
++           /*XXX: free the netmap buffers */ 
++            (*wd_nmap_free)(skb->wd_nmap_ctx);
++        }
++        else
++#endif
++
+ 		skb_free_head(skb);
+ 	}
+ 	off = (data + nhead) - skb->head;
+@@ -1134,6 +1216,15 @@
+ 	skb->hdr_len  = 0;
+ 	skb->nohdr    = 0;
+ 	atomic_set(&skb_shinfo(skb)->dataref, 1);
++#ifdef CONFIG_WD_NMAP
++    	skb->wd_netmap = 0;
++    	if (nmap_alloc)
++    	{
++        	skb->wd_netmap = 1;
++        	skb->wd_nmap_ctx = (void *)nmap_priv;
++    	}
++#endif
++
+ 	return 0;
+ 
+ nofrags:
+diff -Naur linux-3.18.17/net/Kconfig linux-3.18.17_wdnmap_clean/net/Kconfig
+--- linux-3.18.17/net/Kconfig	2015-06-28 10:40:40.000000000 -0700
++++ linux-3.18.17_wdnmap_clean/net/Kconfig	2015-08-04 23:30:14.189301317 -0700
+@@ -370,6 +370,13 @@
+ source "net/ceph/Kconfig"
+ source "net/nfc/Kconfig"
+ 
++config WD_NMAP
++	bool "wireless nmap support"
++	default y
++	help
++	  If you say Y here the netmap support for wireless driver is enabled
++	  If you say N the netmap support is not enabled
++	  If unsure, say Y.
+ 
+ endif   # if NET

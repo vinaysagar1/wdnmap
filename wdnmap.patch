@@ -1,0 +1,12 @@
+diff -Naur netmap-master/sys/net/netmap.h netmap-master1/sys/net/netmap.h
+--- netmap-master/sys/net/netmap.h	2015-06-29 09:02:11.000000000 -0700
++++ netmap-master1/sys/net/netmap.h	2015-08-09 23:40:38.823465682 -0700
+@@ -147,6 +147,8 @@
+ 	uint16_t len;		/* length for this slot */
+ 	uint16_t flags;		/* buf changed, etc. */
+ 	uint64_t ptr;		/* pointer for indirect buffers */
++/* XXX: wd_netmap */
++        uint32_t old_buf;  /* old buffer idx for wd zero copy */
+ };
+ 
+ /*
